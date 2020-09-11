@@ -1,3 +1,8 @@
+# PoE Fork 
+This fork contains changes for decompressing Path of Exiles bundle files.
+To work correctly you will need the Oodle dll file.
+
+
 # ooz
 Open source Kraken / Mermaid / Selkie / Leviathan / LZNA / Bitknit decompressor
 
@@ -23,3 +28,4 @@ Usage: ooz [options] input [output]
 
 (Warning! not fuzz safe, so please trust the input)
 ```
+

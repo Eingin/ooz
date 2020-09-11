@@ -18,6 +18,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #include "stdafx.h"
 #include <sys/stat.h>
+#include <iostream>
+#include <vector>
 
 // Header in front of each 256k block
 typedef struct KrakenHeader {
@@ -2183,7 +2185,7 @@ int Kraken_DecodeBytes(byte **output, const byte *src, const byte *src_end, int 
     scratch += dst_size;
   }
 
-//  printf("%d -> %d (%d)\n", src_size, dst_size, chunk_type);
+  printf("%d -> %d (%d)\n", src_size, dst_size, chunk_type);
 
   int src_used = -1;
   switch (chunk_type) {
@@ -4132,6 +4134,7 @@ int Kraken_Decompress(const byte *src, size_t src_len, byte *dst, size_t dst_len
   KrakenDecoder *dec = Kraken_Create();
   int offset = 0;
   while (dst_len != 0) {
+      fprintf(stderr, "Chunk: %X\n", offset);
     if (!Kraken_DecodeStep(dec, dst, offset, dst_len, src, src_len))
       goto FAIL;
     if (dec->src_used == 0)
@@ -4389,53 +4392,63 @@ int main(int argc, char *argv[]) {
     int outbytes = 0;
 
     if (arg_direction == 'z') {
-      // compress using the dll
-      if (arg_dll)
-        LoadLib();
-      output = new byte[input_size + 65536];
-      if (!output) error("memory error", curfile);
-      *(uint64*)output = input_size;
-      QueryPerformanceCounter((LARGE_INTEGER*)&start);
-      if (arg_dll) {
-        outbytes = OodLZ_Compress(arg_compressor, input, input_size, output + 8, arg_level, 0, 0, 0, 0, 0);
-      } else {
-        outbytes = CompressBlock(arg_compressor, input, output + 8, input_size, arg_level, 0, 0, 0);
-      }
-      if (outbytes < 0) error("compress failed", curfile);
-      outbytes += 8;
-      QueryPerformanceCounter((LARGE_INTEGER*)&end);
-      QueryPerformanceFrequency((LARGE_INTEGER*)&freq);
-      double seconds = (double)(end - start) / freq;
-      if (!arg_quiet)
-        fprintf(stderr, "%-20s: %8d => %8d (%.2f seconds, %.2f MB/s)\n", argv[argi], input_size, outbytes, seconds, input_size * 1e-6 / seconds);
-    } else {
-      if (arg_dll)
-        LoadLib();
+        // compress using the dll
+        if (arg_dll)
+            LoadLib();
+        output = new byte[input_size + 65536];
+        if (!output) error("memory error", curfile);
+        *(uint64*)output = input_size;
+        QueryPerformanceCounter((LARGE_INTEGER*)&start);
+        if (arg_dll) {
+            outbytes = OodLZ_Compress(arg_compressor, input, input_size, output + 8, arg_level, 0, 0, 0, 0, 0);
+        }
+        else {
+            outbytes = CompressBlock(arg_compressor, input, output + 8, input_size, arg_level, 0, 0, 0);
+        }
+        if (outbytes < 0) error("compress failed", curfile);
+        outbytes += 8;
+        QueryPerformanceCounter((LARGE_INTEGER*)&end);
+        QueryPerformanceFrequency((LARGE_INTEGER*)&freq);
+        double seconds = (double)(end - start) / freq;
+        if (!arg_quiet)
+            fprintf(stderr, "%-20s: %8d => %8d (%.2f seconds, %.2f MB/s)\n", argv[argi], input_size, outbytes, seconds, input_size * 1e-6 / seconds);
+    }
+    else {
+        if (arg_dll)
+            LoadLib();
 
-      // stupidly attempt to autodetect if file uses 4-byte or 8-byte header,
-      // the previous version of this tool wrote a 4-byte header.
-      int hdrsize = *(uint64*)input >= 0x10000000000 ? 4 : 8;
-      
-      uint64 unpacked_size = (hdrsize == 8) ? *(uint64*)input : *(uint32*)input;
-      if (unpacked_size > (hdrsize == 4 ? 52*1024*1024 : 1024 * 1024 * 1024)) 
-        error("file too large", curfile);
-      output = new byte[unpacked_size + SAFE_SPACE];
-      if (!output) error("memory error", curfile);
+        uint32 unpacked_size = *(uint32*)input;
+        uint32 compressedSize = *(uint32*)(input + 0x4);
+        uint16 count = *(uint16*)(input + 0x24);
 
-      QueryPerformanceCounter((LARGE_INTEGER*)&start);
+        output = new byte[unpacked_size + SAFE_SPACE];
+        if (!output) error("memory error", curfile);
 
-      if (arg_dll) {
-        outbytes = OodLZ_Decompress(input + hdrsize, input_size - hdrsize, output, unpacked_size, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-      } else {
-        outbytes = Kraken_Decompress(input + hdrsize, input_size - hdrsize, output, unpacked_size);
-      }
-      if (outbytes != unpacked_size)
-        error("decompress error", curfile);
-      QueryPerformanceCounter((LARGE_INTEGER*)&end);
-      QueryPerformanceFrequency((LARGE_INTEGER*)&freq);
-      double seconds = (double)(end - start) / freq;
-      if (!arg_quiet)
-        fprintf(stderr, "%-20s: %8d => %8d (%.2f seconds, %.2f MB/s)\n", argv[argi], input_size, (int)unpacked_size, seconds, unpacked_size * 1e-6 / seconds);
+        QueryPerformanceCounter((LARGE_INTEGER*)&start);
+
+        std::vector<uint32> chunk_sizes = {};
+
+        for (size_t i = 0; i < count; i++)
+        {
+            chunk_sizes.push_back(*(uint32*)(input + 0x3C + (i * 0x4)));
+        }
+
+        uint32 data_offset = 0x3C + (count * 0x4);
+        uint32 decompress_offset = 0;
+
+        fprintf(stderr, "uncompressedSize: %d \ncompressedSize: %d\ncount: %d\ndata offset: %X\n", unpacked_size, compressedSize, count, data_offset);
+        if (arg_dll) {
+            outbytes = OodLZ_Decompress(input + data_offset, compressedSize, output, unpacked_size, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        }
+        else {
+            outbytes = Kraken_Decompress(input + data_offset, compressedSize, output, unpacked_size);
+        }
+
+        QueryPerformanceCounter((LARGE_INTEGER*)&end);
+        QueryPerformanceFrequency((LARGE_INTEGER*)&freq);
+        double seconds = (double)(end - start) / freq;
+        if (!arg_quiet)
+            fprintf(stderr, "%-20s: %8d => %8d (%.2f seconds, %.2f MB/s)\n", argv[argi], input_size, (int)unpacked_size, seconds, unpacked_size * 1e-6 / seconds);
     }
 
     if (verifyfolder) {
